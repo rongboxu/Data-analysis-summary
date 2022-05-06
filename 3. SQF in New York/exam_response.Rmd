@@ -1,0 +1,333 @@
+---
+title: "Name: Rongbo Xu"
+author: 
+- |
+    | Student number: 20114028
+date: "`r format(Sys.time(), '%X, %d %B, %Y')`"
+output: html_document
+---
+# Originality declaration  
+
+I, [**Rongbo Xu**], confirm that the work presented in this assessment is my own. Where information has been derived from other sources, I confirm that this has been indicated in the work.
+
+date: `r format(Sys.time(), '%d %B, %Y')`
+
+# Initial project scope
+
+##Introduction
+* The stop, question and frisk (SQF) policy means that police officers own the power of detaining and questioning citizens they have “reasonable suspicion” have committed or are about to commit a crime (Rosenfeld and Fornango 2017). 
+- NYPD officers have been required to document each Stop they make since 2003. The number of such stops quadrupled from 160,851 in 2003 to 685,724 in 2011, and then began to fall. According  to the latest data (https://www1.nyc.gov/site/nypd/stats/reports-analysis/stopfrisk.page), the number of SQF has fallen to 9,544 in 2020. 
+
+##The research question
+* State the assumption
+Using the data provided, the project mainly wants to analyze the key features of SQF events in New York through the following questions:
+  * What is the average of SQF occurrence in New York? (using basic descriptive methods)
+  * Does each borough in New York performance the same SQF occurrence density? Which parts of New York are more likely to happen SQF? (using Moran’s I analysis)
+To the second question, we assume that there exists spatial difference among New York.
+- Literature review
+During its peak years, the New York Police Department’s (NYPD) stop, question, and frisk (SQF) policy generated extensive controversy (Rosenfeld and Fornango 2017). Some researches focus on the racial inequality issues revealed by the actions (Ridgeway 2007). However, we find there are few studies about the spatial difference of SQF in the city. Thus, we plan to focus on the spatial disparities of SQF in New York.
+
+##The data
+* A brief evaluation of the main research dataset
+The dataset we will use comes from the New York City Police Department. It records every stop, question and frisk event of New York police officers in the year of 2020. For each stop, it contains detailed information, such as the date, suspected crime description and so on. Among them, the geographic information, including the stop_location_precinct, and the longitude and the latitude of each stop, will be very useful for us to conduct spatial analysis.
+One thing we should be careful is that the longitude and the latitude data are given in the New York-Long Island State Plane Coordinate System (EPSG 2908). We would better to use this CRS as our basic CRS.
+- An assessment of any data processing tasks that will be required
+We believe there is not much hard data processing task, concerning that the original dataset has provided clear geographic information. What we should is to join it with the police districts data well and conduct the analysis at the level of police precincts.
+
+##The analysis method
+* A brief explanation of the data wrangling
+To answer question2, we need the data of SQF occurrence density of each police precinct, so the important part of the data wrangling will be the calculation of density.
+* A brief explanation of the analysis you intend to undertake
+To answer question1, we will use functions like sum(), geom_histogram() and so on to describe its basic features.
+To answer question2, we will calculate Moran's I and other statistics to describe and analyze the spatial autocorrelation features.
+
+
+#Read in data
+* First, library all the packages.
+```{r}
+library(tidyverse)
+library(tmap)
+library(rgdal)
+library(broom)
+library(mapview)
+library(crosstalk)
+library(sf)
+library(sp)
+library(spdep)
+library(car)
+library(fs)
+library(janitor)
+library(here)
+library(RColorBrewer)
+```
+
+* Read spatial data and non-spatial data in.
+```{r}
+shape <- st_read(here::here("data","Police Precincts",
+                            "geo_export_eca85e4a-0929-4ac0-a2ab-40ce5559dc19.shp"))
+sqf <- read_csv(here::here("data","sqf-2020.csv"))
+```
+
+#Transforming data
+projecting, making csv to a sf object etc
+
+* Set the right crs for spatial data.
+```{r}
+raster::crs(shape)
+shape <- shape %>%
+  st_transform(., crs=2908)
+```
+
+* Make the first csv to a sf object and set the crs.
+```{r}
+sqf1 <- sqf %>%
+  filter(STOP_LOCATION_Y >= 120000)%>%
+  filter(STOP_LOCATION_X >= 910000)%>%
+  st_as_sf(., coords = c("STOP_LOCATION_X","STOP_LOCATION_Y"),
+           crs = 2908)
+```
+
+* Remove duplicates and select the points inside New York
+```{r}
+sqf1 <- distinct(sqf1)
+sqf2 <- sqf1[shape,]
+```
+
+* Plot the sqf points in the city.
+```{r}
+tmap_mode("plot")
+tm_shape(shape) +
+  tm_polygons(col = NA, alpha = 0.5)+
+tm_shape(sqf2) +
+  tm_dots(col = "blue", size=0.001)
+```
+From the plot, we can clearly see that there is obvious spatial difference of SQF occurrence in New York. The whole area of Manhattan (the north west), the large part of Bronx, and the north-east part of Brooklyn are three main locations of SQF occurrence. In comparison, Queens and Staten Island are two boroughs which are less likely to occur SQF.
+
+
+#Preparing data for analysis
+The second analysis is the measurement of spatial autocorrelation of the occurrence of SQF in New York. We need to count all of the SQF events that fall within each police precincts in New York, then calculate the density of each precinct.
+
+* Join the two dataset together. 
+```{r}
+points_sf_joined <- shape%>%
+  st_join(sqf2)
+
+#calculate density of the points per precinct
+points_sf_joined <- points_sf_joined %>%
+  add_count(precinct)%>%
+  janitor::clean_names()%>%
+  mutate(density = n *10000000/shape_area)
+
+#keep useful columns
+points_sf_joined2 <- points_sf_joined %>%
+  dplyr::select(precinct,stop_location_boro_name,density)%>%
+  group_by(precinct) %>%         
+  summarise(precinct = first(precinct),
+            borough= first(stop_location_boro_name),
+            density= first(density))
+```
+
+#Analysis
+
+##Analysis 1
+* Observe the distribution of density
+```{r}
+ggplot(points_sf_joined2, aes(x=density)) + 
+  geom_histogram(bins = 50)
+summary(points_sf_joined2$density)
+```
+The min value of density is 1.345 (10 events/ square kilometre), the max value is 98.287 (10 events/ square kilometre). And the distribution belongs to positive skew, which means there is a tail along the right side of it.
+
+* Observe the density on the map
+```{r}
+tm_shape(points_sf_joined2) +
+    tm_polygons("density",
+        style="jenks",
+        palette="PuOr",
+        midpoint=NA,
+        popup.vars=c("precinct", "density"),
+        title="SQF Occurrence Density") +
+  tm_scale_bar(position=c(0.6,0.04), text.size=0.4)+
+    tm_compass(north=0, position=c(0.85,0.85))
+```
+From the density map, the finding we can get is quite similar to the finding of the plot map above. However, in this map, Manhattan area becomes particularly prominent. Several precincts of Manhattan have the SQF occurrence density over 45.2 (10 events/ square kilometre), while the SQF occurrence density of the large part of Queens and Staten Island is below 11.36 (10 events/ square kilometre).
+The other finding is that we might have some clustering of SQF occurrence density in the Manhattan area so let’s check this with Moran’s I and some other statistics.
+
+##Spatial autocorrelation with Moran’s I, LISA and friends
+
+### Define a spatial weights matrix
+```{r}
+#First calculate the centroids of all precincts in New York
+coordsW <- points_sf_joined2 %>%
+  st_centroid()%>%
+  st_geometry()
+plot(coordsW,axes=TRUE)
+```
+```{r}
+#create a neighbours list
+L_nb <- points_sf_joined2 %>%
+  poly2nb(., queen=T)
+summary(L_nb)
+```
+Here it is telling us that the average number of neighbours is 4.23. Now let’s plot the neighbours.
+
+```{r}
+#plot them
+plot(L_nb, st_geometry(coordsW), col="red")
+#add a map underneath
+plot(points_sf_joined2$geometry, add=T)
+```
+
+### Calculate the Moran’s I and other associated statistics
+The first one is Moran’s I. 
+Moran’s I test tells us whether we have clustered values (close to 1) or dispersed values (close to -1).
+```{r}
+L_lw <- L_nb %>%
+  nb2listw(., style="C")
+#Moran’s I test
+I_Global_Density <- points_sf_joined2 %>%
+  pull(density) %>%
+  as.vector()%>%
+  moran.test(., L_lw)
+
+I_Global_Density
+```
+
+The second one is Geary’s C. This tells us whether similar values or dissimilar values are clustering.
+```{r}
+#Geary’s C
+C_Global_Density <- points_sf_joined2 %>%
+  pull(density) %>%
+  as.vector()%>%
+  geary.test(., L_lw)
+
+C_Global_Density
+```
+
+The third one is Getis Ord General G. This tells us whether high or low values are clustering. If G > Expected = High values clustering; if G < expected = low values clustering.
+```{r}
+#Getis Ord General G
+G_Global_Density <- points_sf_joined2 %>%
+  pull(density) %>%
+  as.vector()%>%
+  globalG.test(., L_lw)
+
+G_Global_Density
+```
+
+Now we can explain the meaning of each indicators of autocorrelation:
+* The Moran’s I statistic = 0.50 (1 = clustered, 0 = no pattern, -1 = dispersed) which shows that we have some distinctive clustering.
+- The Geary’s C statistic = 0.52 (Geary’s C falls between 0 and 2; 1 means no spatial autocorrelation, <1 - positive spatial autocorrelation or similar values clustering, >1 - negative spatial autocorreation or dissimilar values clustering) which shows that we have positive spatial autocorrelation or similar values clustering.
++ The General G statistic = G > expected, so high values are tending to cluster.
+
+### Calculate the local versions of the Moran’s I
+Then we can calculate local versions of the Moran’s I statistic (for each precinct) and a Getis Ord statistic to see where we have hot-spots.
+```{r}
+#use the localmoran function to generate I for each precinct in the city
+I_Local_Density <- points_sf_joined2 %>%
+  pull(density) %>%
+  as.vector()%>%
+  localmoran(., L_lw)%>%
+  as_tibble()
+
+#the output
+slice_head(I_Local_Density, n=5)
+```
+```{r}
+#copy some of the columns (the I score (column 1) and the z-score standard deviation (column 4)) back into the shapefile
+points_sf_joined2 <- points_sf_joined2 %>%
+  mutate(density_I =as.numeric(I_Local_Density$Ii))%>%
+  mutate(density_Iz =as.numeric(I_Local_Density$Z.Ii))
+```
+
+### Mapping the local versions of the Moran’s I
+We can set the breaks manually based on the rule that data points >2.58 or <-2.58 standard deviations away from the mean are significant at the 99% level (<1% chance that autocorrelation not present); >1.96 - <2.58 or <-1.96 to >-2.58 standard deviations are significant at the 95% level (<5% change that autocorrelation not present). >1.65 = 90% etc.
+```{r}
+breaks1<-c(-1000,-2.58,-1.96,-1.65,1.65,1.96,2.58,1000)
+```
+
+And create a new diverging colour brewer palette and reverse the order using rev() (reverse) so higher values correspond to red.
+```{r}
+MoranColours<- rev(brewer.pal(8, "RdGy"))
+```
+
+Plot on a map
+```{r}
+tm_shape(points_sf_joined2) +
+    tm_polygons("density_Iz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, SQF occurrence density in New York",
+        )
+```
+This map shows some areas in the Manhattan borough that have relatively high scores, indicating areas with lots of SQF occurrence neighbouring other areas with lots of SQF occurrence.
+
+Then calculate the Getis Ord statisic for hot and cold spots and map it.
+```{r}
+Gi_Local_Density <- points_sf_joined2 %>%
+  pull(density) %>%
+  as.vector()%>%
+  localG(., L_lw)
+head(Gi_Local_Density)
+```
+```{r}
+#copy them back to the shapefile
+points_sf_joined2 <- points_sf_joined2 %>%
+  mutate(density_G = as.numeric(Gi_Local_Density))
+#map them
+GIColours<- rev(brewer.pal(8, "RdBu"))
+
+tm_shape(points_sf_joined2) +
+    tm_polygons("density_G",
+        style="fixed",
+        breaks=breaks1,
+        palette=GIColours,
+        midpoint=NA,
+        title="Gi*, SQF occurrence density in New York")
+```
+From the Getis Ord map, we find their expressions of the hot spots in the Manhattan borough are very similar to each other. The Manhattan borough are likely to be cut to 3 parts. The north and south parts are high value area, where SQF happens very frequently. While the area around the Central Park are comparatively low value area, where SQF doesn't happen so frequently.
+
+#Final outputs
+```{r}
+tm_shape(points_sf_joined2) +
+    tm_polygons("density",
+        style="jenks",
+        palette="PuOr",
+        midpoint=NA,
+        popup.vars=c("precinct", "density"),
+        title="SQF Occurrence Density") +
+  tm_scale_bar(position=c(0.6,0.04), text.size=0.4)+
+    tm_compass(north=0, position=c(0.85,0.85))
+```
+This map shows the spatial difference of SQF density all around New York. From that we can clearly see that Manhattan borough are the most prominent borough in the 5 boroughs.
+
+```{r}
+tm_shape(points_sf_joined2) +
+    tm_polygons("density_Iz",
+        style="fixed",
+        breaks=breaks1,
+        palette=MoranColours,
+        midpoint=NA,
+        title="Local Moran's I, SQF occurrence density")+
+   tm_scale_bar(position=c(0.6,0.04), text.size=0.4)+
+    tm_compass(north=0, position=c(0.85,0.85)) 
+  
+```
+This map shows local Moran’s I values for the study area indicating positive spatial autocorrelation towards the north and the south of Manhattan borough. The Manhattan borough are likely to be cut to 3 parts. The north and south parts are high value area, where SQF happens very frequently.
+
+
+#Reflection
+* To the New York Police Department, we think the first idea we should convey is that, the stop, question and frisk (SQF) events happens more frequently in the Manhattan borough. And our analysis shows that there exists significant spatial autocorrelation relationship among some areas of the Manhattan borough, thus the police should pay more attention to these areas.
+- We must state that the better measurement of the average of each precinct is SQF events per capita, nor the density. However, the population data of each precinct in New York is hard to get in a short time (typically the population is recorded at the level of census tract).
+
+#Reference
+Ridgeway, G. (2007). Analysis of racial disparities in the New York Police Department's stop, question, and frisk practices.
+Rosenfeld, R., & Fornango, R. (2017). The relationship between crime and stop, question, and frisk rates in New York City neighborhoods. Justice Quarterly, 34(6), 931-951.
+
+
+
+
+
+
