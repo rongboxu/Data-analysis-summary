@@ -1,2 +1,6 @@
-This folder contains Python code of how to do centrality measure and node removal impact measure in the non-weighted and weighted network.  
-This folder also contains Python code of how to build spatial interaction models about the flows between each node in the network.
+This folder contains Python code of :  
+&ensp; how to do centrality measure  
+&ensp; how to do node removal impact measure  
+&ensp; how to do above measure in the non-weighted and weighted network  
+&ensp; how to build spatial interaction models  
+&ensp; how to apply models to forecast the flows between each node.
